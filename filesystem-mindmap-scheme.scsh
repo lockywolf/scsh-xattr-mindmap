@@ -1,0 +1,59 @@
+#!/usr/bin/env -S scsh -ds -s
+!#
+#!
+Time-stamp: <2021-03-17 20:23:44 lockywolf>
+#+description: A port of dir2dot by Darxus@ChaosReighs.com into scsh.
+#+author: lockywolf
+#+created: <2021-03-17 Wed>
+#+category: utilities
+#+tags: programming, mind, mind-map, scheme
+#+creator: Emacs 27.1/org-mode 9.4
+Usage:
+filesystem-mindmap-scheme root > /tmp/dirtree.dot
+neato -Tpng dirtree.dot > dirtree.png
+Graphviz: https://www.graphviz.org/
+!#
+
+;; (if (zero? (run (ls)))
+;;    (display "LS successful.\n")
+;;    (display "LS unsuccessful."))
+;; (display "Hello\n")
+;; (display "arguments:")
+;; (display command-line-arguments)
+;; (newline)
+;; (display "(argv 1 \".\"): ") (display (argv 1 ".")) (newline)
+;; (display "string-join test:") (display (string-join  (list "string1" "string2") "/" ))
+;; (newline)
+
+(display "digraph \"directory tree\" {\n")
+(map (lambda (filename)
+       ;(display x)
+       (let* ((target (regexp-fold (rx (+ (~ "/")))
+                                   (lambda (i m lis)
+                                     (cons (match:substring m 0) lis))
+                                   '() filename))
+              (target-shape (cond
+                                ((file-directory? filename #f) "ellipse")
+                                ((file-regular? filename #f) "box")
+                                (else "star")))
+              (target-label (car target))
+              (source-name (string-join (reverse (cdr target)) "/"))
+              (node-string (string-append "\"" filename "\" [label=\"" target-label "\" , shape=" target-shape "]"))
+              (edge-string (string-append "\"" source-name "\" -> \"" filename "\" [len=3]"
+                                          (if (not (file-symlink? filename))
+                                             ""
+                                             (string-append "\n\"" filename "\" -> \"" (read-symlink filename) "\" [len=3]"))))
+              )
+         ;; (display "target= ")(display target)(newline)
+         ;; (display "target-label=") (display target-label)(newline)
+         ;; (display "source-name=") (display source-name)(newline)
+         (display node-string) (newline)
+         (display edge-string) (newline)))
+ (run/strings (find ,(argv 1 ".") -print)))
+(newline)
+(display "}\n")
+;; Local Variables:
+;; mode: scheme
+;; ;compile-command: "cc foo.c -Dfoo=bar -Dhack=whatever \
+;; ;  -Dmumble=blaah"
+;; End:

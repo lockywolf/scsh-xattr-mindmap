@@ -1,0 +1,43 @@
+# -*- mode: org; eval: (visual-line-mode) -*-
+# Time-stamp: <2021-03-17 20:43:29 lockywolf>
+#+title: Visualising File System with simple tools.
+#+author: lockywolf
+#+date: 
+#+created: <2021-03-17 Wed>
+#+refiled:
+#+language: en
+#+category: utilities
+#+tags: utilities, mind-mapping, programming, computers, software, philosophy,
+#+creator: Emacs 27.1/org-mode 9.4
+
+# Scsh Xattr Mindmap
+
+Drawing mindmaps from you File System with scsh and xattrs.
+
+
+
+* TODO Concept
+
+I like the idea of visualising concepts, while computers are notoriously non-visual by default. For my own purposes, I wanted to find a tool to visualise at least the data on my own hard drive.
+
+Mind-mapping is one of the most famous methods of doing that, along with the tag cloud.
+I tried various tools for mind mapping, including xmind, and others, but found them to be too heavy.
+
+* TODO Usage
+
+#+begin_example
+filesystem-mindmap-scheme.scsh root-dir
+#+end_example
+
+* TODO Dependencies
+
+1. Scheme48 1.9.2
+2. scsh 0.7 (be careful, at the moment of writing of this document, building it is not easy)
+3. graphviz
+4. gnu coreutils
+5. attr
+
+* TODO Prior art
+
+1. xmind
+
