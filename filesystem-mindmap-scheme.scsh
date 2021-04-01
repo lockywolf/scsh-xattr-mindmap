@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scsh -ds -s
 !#
 #!
-Time-stamp: <2021-03-24 23:23:29 lockywolf>
+Time-stamp: <2021-04-01 23:02:23 lockywolf>
 #+description: A port of dir2dot by Darxus@ChaosReighs.com into scsh.
 #+author: lockywolf
 #+created: <2021-03-17 Wed>
@@ -25,39 +25,96 @@ Graphviz: https://www.graphviz.org/
 ;; (display "string-join test:") (display (string-join  (list "string1" "string2") "/" ))
 ;; (newline)
 
-(define directory-detector-list (list ".git" ".svn" ".cvs"))
 
-(define (directory-repo? path)
-  (member ".git" (directory-files path #t)))
 
-(define (main)
-  (display "digraph \"directory tree\" {\n")
-  (map (lambda (filename)
-                                        ;(display x)
-         (let* ((target (regexp-fold (rx (+ (~ "/")))
-                                     (lambda (i m lis)
-                                       (cons (match:substring m 0) lis))
-                                     '() filename))
-                (target-shape (cond
-                               ((file-directory? filename #f) "ellipse")
-                               ((file-regular? filename #f) "box")
-                               (else "star")))
-                (target-label (car target))
-                (source-name (string-join (reverse (cdr target)) "/"))
-                (node-string (string-append "\"" filename "\" [label=\"" target-label "\" , shape=" target-shape "]"))
-                (edge-string (string-append "\"" source-name "\" -> \"" filename "\" [len=3]"
-                                            (if (not (file-symlink? filename))
-                                               ""
-                                               (string-append "\n\"" filename "\" -> \"" (read-symlink filename) "\" [len=3]"))))
-                )
-           ;; (display "target= ")(display target)(newline)
-           ;; (display "target-label=") (display target-label)(newline)
-           ;; (display "source-name=") (display source-name)(newline)
-           (display node-string) (newline)
-           (display edge-string) (newline)))
-       (run/strings (find ,(argv 1 ".") -print)))
-  (newline)
-  (display "}\n"))
+(define-interface mindmap-interface (export escape-string-demo filesep walk-tree))
+
+(define-structure mindmap mindmap-interface
+  (open
+   scheme-with-scsh
+   os-strings
+   (subset srfi-13 (string-join))
+   (subset srfi-1 (lset-intersection)))
+
+  (begin
+
+    (define filesep "/")
+
+    (define directory-repo-marker-list (list ".git" ".svn" ".cvs"))
+
+    (define (directory-repo? path)
+      (not (null? (lset-intersection equal? directory-repo-marker-list (directory-files path #t)))))
+
+    (define (parse-filename filename)
+      (regexp-fold (rx (+ (~ "/")))
+                   (lambda (i m lis)
+                     (cons (match:substring m 0) lis))
+                   '() filename))
+
+    (define (walk-tree file parent)
+      (define full-path (string-append parent filesep file))
+        (display (format-node full-path
+                                   file
+                                   (select-node-shape full-path)))
+        (newline)
+        (if (not (file-directory? full-path #f))
+             (begin (display " (terminal)") (newline))
+             (let ((children (directory-files full-path #t)))
+               (map (lambda (f) (newline) (walk-tree f full-path))
+                    children))))
+
+    (define (print-prologue)
+      (display "digraph \"directory tree\" {\n"))
+    (define (print-epilogue)
+      (display "}\n"))
+
+    (define (select-node-shape filename)
+      (cond
+       ((file-directory? filename #f) "ellipse")
+       ((file-regular? filename #f) "box")
+       (else "star")))
+    
+    (define (format-node filename target-label target-shape)
+      (string-append
+       "\"" filename "\"  [label=\""
+       target-label
+       "\" , shape="
+       target-shape "]"))
+    
+    (define (escape-string-demo os-str)
+      ;;(os-string? str)
+      ;; (let ((p (make-string-output-port)))
+      ;;   (write str p)
+      ;;   (string-output-port-output p))
+      (os-string->string os-str)
+      )
+
+
+
+
+    (define (main)
+      (print-prologue)
+      (map (lambda (filename)
+             (let* ((target (parse-filename filename))
+                    (target-shape (select-node-shape filename))
+                    (target-label (car target))
+                    (source-name (string-join (reverse (cdr target)) "/"))
+                    (node-string (format-node filename target-label target-shape))
+                    (edge-string (string-append "\"" source-name "\" -> \"" filename "\" [len=3]"
+                                                (if (not (file-symlink? filename))
+                                                   ""
+                                                   (string-append "\n\"" filename "\" -> \"" (read-symlink filename) "\" [len=3]"))))
+                    )
+               ;; (display "target= ")(display target)(newline)
+               ;; (display "target-label=") (display target-label)(newline)
+               ;; (display "source-name=") (display source-name)(newline)
+               (display node-string) (newline)
+               (display edge-string) (newline)))
+           (run/strings (find ,(argv 1 ".") -print)))
+      (newline)
+      (print-epilogue))
+    )
+  )
 
 ;; Local Variables:
 ;; mode: scheme
