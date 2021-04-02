@@ -1,7 +1,7 @@
-#!/usr/bin/env -S scsh -ds -s
+#!/usr/bin/env -S scsh -dm -m mindmap -e newmain -s
 !#
 #!
-Time-stamp: <2021-04-01 23:02:23 lockywolf>
+Time-stamp: <2021-04-02 13:00:04 lockywolf>
 #+description: A port of dir2dot by Darxus@ChaosReighs.com into scsh.
 #+author: lockywolf
 #+created: <2021-03-17 Wed>
@@ -27,7 +27,7 @@ Graphviz: https://www.graphviz.org/
 
 
 
-(define-interface mindmap-interface (export escape-string-demo filesep walk-tree))
+(define-interface mindmap-interface (export newmain))
 
 (define-structure mindmap mindmap-interface
   (open
@@ -37,6 +37,11 @@ Graphviz: https://www.graphviz.org/
    (subset srfi-1 (lset-intersection)))
 
   (begin
+
+    (define (newmain args)
+      (print-prologue)
+      (walk-tree "." (argv 1 "."))
+      (print-epilogue))
 
     (define filesep "/")
 
@@ -51,20 +56,28 @@ Graphviz: https://www.graphviz.org/
                      (cons (match:substring m 0) lis))
                    '() filename))
 
+    (define (escape-like-write s)
+      (let ((p (make-string-output-port)))
+        (write s p)
+        (string-output-port-output p)))
+
     (define (walk-tree file parent)
       (define full-path (string-append parent filesep file))
         (display (format-node full-path
                                    file
                                    (select-node-shape full-path)))
         (newline)
+        (display (format-edge parent full-path))
         (if (not (file-directory? full-path #f))
-             (begin (display " (terminal)") (newline))
+             (begin (display " // (terminal)") (newline))
              (let ((children (directory-files full-path #t)))
                (map (lambda (f) (newline) (walk-tree f full-path))
                     children))))
 
     (define (print-prologue)
-      (display "digraph \"directory tree\" {\n"))
+      (display "digraph \"directory tree\" {\n")
+      (display "graph [overlap=false, splines=true];\n"))
+    
     (define (print-epilogue)
       (display "}\n"))
 
@@ -72,14 +85,21 @@ Graphviz: https://www.graphviz.org/
       (cond
        ((file-directory? filename #f) "ellipse")
        ((file-regular? filename #f) "box")
-       (else "star")))
+       (else "underline")))
     
     (define (format-node filename target-label target-shape)
       (string-append
-       "\"" filename "\"  [label=\""
-       target-label
-       "\" , shape="
-       target-shape "]"))
+       (escape-like-write filename) "  [label="
+       (escape-like-write target-label)
+       " , shape="
+       target-shape "] // ;"))
+
+    (define (format-edge source-name target-name)
+      (string-append (escape-like-write source-name) " -> " (escape-like-write target-name)  " // [len=3]"
+         (if (not (file-symlink? target-name))
+           ""
+           (string-append "\n" (escape-like-write target-name) " -> " (escape-like-write (read-symlink target-name))  " // [len=3]"
+                          ))))
     
     (define (escape-string-demo os-str)
       ;;(os-string? str)
@@ -100,14 +120,8 @@ Graphviz: https://www.graphviz.org/
                     (target-label (car target))
                     (source-name (string-join (reverse (cdr target)) "/"))
                     (node-string (format-node filename target-label target-shape))
-                    (edge-string (string-append "\"" source-name "\" -> \"" filename "\" [len=3]"
-                                                (if (not (file-symlink? filename))
-                                                   ""
-                                                   (string-append "\n\"" filename "\" -> \"" (read-symlink filename) "\" [len=3]"))))
+                    (edge-string (format-edge source-name filename))
                     )
-               ;; (display "target= ")(display target)(newline)
-               ;; (display "target-label=") (display target-label)(newline)
-               ;; (display "source-name=") (display source-name)(newline)
                (display node-string) (newline)
                (display edge-string) (newline)))
            (run/strings (find ,(argv 1 ".") -print)))
