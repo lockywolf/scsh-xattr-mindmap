@@ -1,5 +1,5 @@
 # -*- mode: org; eval: (visual-line-mode) -*-
-# Time-stamp: <2021-03-17 20:43:29 lockywolf>
+# Time-stamp: <2021-04-06 15:45:48 lockywolf>
 #+title: Visualising File System with simple tools.
 #+author: lockywolf
 #+date: 
@@ -31,11 +31,36 @@ filesystem-mindmap-scheme.scsh root-dir
 
 * TODO Dependencies
 
-1. Scheme48 1.9.2
+1. Scheme48 1.9.2 (with 1 000 000 000 words heap)
 2. scsh 0.7 (be careful, at the moment of writing of this document, building it is not easy)
-3. graphviz
-4. gnu coreutils
-5. attr
+3. graphviz (built with -O3)
+4. +gnu coreutils+
+5. +attr+
+
+Building:
+
+All these tools are not maintained for many years, so be very wary.
+
+Also, their installation machinery is broken.
+
+I recommend the following work-around:
+
+Build and package scheme48 and scsh as usual, with ~--prefix=/usr/local~.
+This usually involves installing into DESTDIR=/tmp/package-name or something.
+This way your package manager will know where the files are, and you can do
+~make install~ right from the source directories, without littering, because badly
+installed files only replace those tracked by the package manager.
+
+I had to run ~make~ three times, because the build system is broken.
+
+Then patch scheme48 to use 4G of words adjust the line in c/init.c:
+c/init.c:19:#define DEFAULT_HEAP_SIZE 4000000000 // 4000000L
+~make && make & make && sudo make install~
+
+Due to hardlinks, we need to keep all the file system structure in memory, and that is a lot of memory.
+(Or maybe I am just a bad programmer.)
+
+Maybe you also need to replace '-h 0' in the scsh Makefile.in with '-h 4000000000'? IDK.
 
 * TODO Prior art
 
