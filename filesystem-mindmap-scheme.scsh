@@ -1,7 +1,7 @@
 #!/usr/bin/env -S scsh -dm -m mindmap -e newmain -s
 !#
 #!
-Time-stamp: <2021-04-06 15:05:47 lockywolf>
+Time-stamp: <2021-04-06 22:19:12 lockywolf>
 #+description: A port of dir2dot by Darxus@ChaosReighs.com into scsh.
 #+author: lockywolf
 #+created: <2021-03-17 Wed>
@@ -22,16 +22,14 @@ Directory shapes: ordinary:oval, project:house, repo:doubleoctagon
 Fillcolor: incompletely displayed trees
 
 TODO:
-1. Filesystem boundaries option.
-2. Recurse into projects option.
 3. File name colouring.
 4. Displaying images.
-5.
+5. Handling of dangling symlinks.
 
 Far TODO:
 1. Music albums.
 2. Other kinds of projects.
-3. 
+3. README.org
 
 !#
 
@@ -59,13 +57,17 @@ Far TODO:
    (subset i/o (set-port-text-codec!))
    (subset text-codecs (utf-8-codec))
    (subset tables (make-string-table table-ref table-set! table-walk))
-   (subset srfi-27 (random-integer)))
+   (subset srfi-27 (random-integer))
+   (subset usual-commands (preview)))
 
   (begin
 
-    (define config-recurse-into-dotfiles #t)
     (define config-album-show-max-files 5)
-    (define config-stop-at-repos #f)
+    (define config-recurse-into-dotfiles #f)
+    (define config-stop-at-repos #t)
+    (define config-stop-at-projects #t)
+    (define config-stop-deliberately #t)
+    (define config-stop-at-filesystem-boundaries #f)
 
     (define (directory-files-without-ignores . o)
       (let ((ans (apply directory-files o)))
@@ -80,7 +82,19 @@ Far TODO:
                                                           "."
                                                           (list-ref args 1)))))
       (print-prologue actual-directory)
-      (walk-tree-and-print-edges "" actual-directory)
+      ;; (call-with-current-continuation
+      ;;     (lambda (continue)
+      ;;       (with-errno-handler*
+      ;;        (lambda (errno packet)
+      ;;          (display "caught error")(newline)
+      ;;          (display "errno=") (display errno) (newline)
+      ;;          (display "packet=") (display packet) (newline)
+      ;;          (display "backtrace:") (newline)
+      ;;          (preview) (newline)
+      ;;          (exit))
+      ;;        (lambda ()
+               (walk-tree-and-print-edges "" actual-directory)
+               ;))))
       (newline)
       (print-nodes)
       (print-epilogue))
@@ -136,6 +150,9 @@ Far TODO:
                         (lset<= equal? d-cur-exts image-extensions-list))))
         retval))
 
+    (define (directory-maildir? path)
+      (lset= (directory-files path #t) (list "cur" "new" "tmp")))
+
     (define (parse-filename filename)
       (regexp-fold (rx (+ (~ "/")))
                    (lambda (i m lis)
@@ -148,7 +165,6 @@ Far TODO:
         (write s p)
         (string-output-port-output p)))
 
-    
 
     (define inode-filename-table
       (make-string-table))
@@ -172,8 +188,9 @@ Far TODO:
                        (number->string (file-info:device f-i))
                        "_"
                        (number->string (file-info:inode  f-i))))
-       (string-append "dangling_" (number->string (random-integer 9999999))
-                      ;; (escape-like-write-without-quotes path)
+       (string-append "\"dangling_" 
+                      (escape-like-write-without-quotes path)
+                      "\""
                       )))
     
     
@@ -221,11 +238,25 @@ Far TODO:
        pos
        ", fontsize=7, margin=\"0,0!\", width=0.01, height=0.01] //  " ))
 
-    (define (should-stop-at? full-path)
+    (define (filesystem-boundary? a b)
+      (let ((retval (and (not (= 0 (string-length a)))
+                       (not (= 0 (string-length b)))
+                       (not (= (file-info:device (file-info a #f))
+                               (file-info:device (file-info b #f)))))))
+        retval))
+
+    (define (should-stop-at? full-path parent)
       (or (not (file-directory? full-path #f))
-         (and config-stop-at-repos (directory-repo? full-path))
-         (directory-project? full-path)
-         (directory-deliberately-terminate? full-path)
+         (and config-stop-at-filesystem-boundaries
+            (filesystem-boundary? parent full-path))
+         (and config-stop-at-repos
+            (directory-repo? full-path))
+         (and config-stop-at-projects
+            (directory-project? full-path))
+         (and config-stop-at-filesystem-boundaries
+            (directory-deliberately-terminate? full-path))
+         (and config-stop-at-maildir
+            (directory-maildir? full-path))
          ;; (directory-album? full-path)
          ))
 
@@ -252,7 +283,23 @@ Far TODO:
         (else directory-files-without-ignores)))
     
     (define (walk-tree-and-print-edges parent file)
-      (define full-path (expand-file-name file parent))
+      (define full-path
+        (call-with-current-continuation
+         (lambda (continue)
+         (with-errno-handler*
+          (lambda (errno packet)
+               (display "caught error")(newline)
+               (display "errno=") (display errno) (newline)
+               (display "packet=") (display packet) (newline)
+               (display "parent=") (display parent) (newline)
+               (display "file=") (display file) (newline)
+               (display "backtrace:") (newline)
+               (preview) (newline)
+               ;(exit)
+               )
+          (lambda () (string-append (expand-file-name parent "/")
+                               filesep
+                               file))))))
       ;;      (display "processing:") (display full-path)(newline)
       (define pos (if (equal? parent "")
                 ", pos=\"0,0!\", pin=true, root=true"
@@ -265,8 +312,8 @@ Far TODO:
 
       ;; (newline)
       (if (not (equal? parent ""))
-       (display (format-edge parent full-path)))
-      (if (should-stop-at? full-path)
+         (display (format-edge parent full-path)))
+      (if (should-stop-at? full-path parent)
          #t ;; (begin (display " // (terminal)") (newline))
          (let ((children ((get-children-filter (directory-semantic-type full-path))
                           full-path config-recurse-into-dotfiles)))
@@ -299,6 +346,7 @@ Far TODO:
             ((directory-deliberately-terminate? full-path) "red")
             ((directory-repo? full-path) "green")
             ((directory-project? full-path) "tomato")
+            ((directory-maildir? full-path) "teal")
             (else "white")))
     
     (define (select-node-shape filename)
