@@ -1,5 +1,5 @@
 # -*- mode: org; eval: (visual-line-mode) -*-
-# Time-stamp: <2021-04-06 15:45:48 lockywolf>
+# Time-stamp: <2021-04-06 22:41:35 lockywolf>
 #+title: Visualising File System with simple tools.
 #+author: lockywolf
 #+date: 
@@ -26,7 +26,9 @@ I tried various tools for mind mapping, including xmind, and others, but found t
 * TODO Usage
 
 #+begin_example
-filesystem-mindmap-scheme.scsh root-dir
+filesystem-mindmap-scheme.scsh root-dir 1> dirmap.dot
+circo -Tjpg dirmap.dot > dirmap-dirco.jpg
+feh dirmap.jpg
 #+end_example
 
 * TODO Dependencies
