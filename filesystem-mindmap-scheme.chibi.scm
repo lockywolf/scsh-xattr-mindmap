@@ -1,7 +1,7 @@
 #!/usr/bin/chibi-scheme -rnewermain
 
 ;;>#!
-;;>Time-stamp: <2021-04-07 12:11:58 lockywolf>
+;;>Time-stamp: <2021-04-07 15:31:26 lockywolf>
 ;;>#+description: A port of dir2dot by Darxus@ChaosReighs.com into scheme.
 ;;>#+author: lockywolf
 ;;>#+created: <2021-03-17 Wed>
@@ -59,15 +59,18 @@
     ;; scheme-with-scsh
     ;; os-strings
     ;; (subset srfi-13 (string-join))
-    ;; (subset srfi-1 (lset-intersection lset<= lset-difference remove length+ take))
+    (only (srfi 1) lset-intersection lset<= lset-difference remove length+ take lset=)
     ;; (subset i/o (set-port-text-codec!))
     ;; (subset text-codecs (utf-8-codec))
     ;; (subset tables (make-string-table table-ref table-set! table-walk))
     ;; (subset srfi-27 (random-integer))
     ;; (subset usual-commands (preview))
+    (chibi trace)
     (scheme small)
-    (srfi 125)
-    (only (chibi filesystem) file-link-status file-status)
+    (only (srfi 125) make-hash-table hash-table-ref/default hash-table-set! hash-table-for-each)
+    (only (srfi 130) string-index-right string-cursor->index)
+    (rename (prefix (chibi filesystem) cfs-))
+    (only (chibi time) current-seconds seconds->string)
    )
 
   (begin
@@ -78,21 +81,30 @@
     (define config-stop-at-projects #t)
     (define config-stop-deliberately #t)
     (define config-stop-at-filesystem-boundaries #f)
+    (define config-stop-at-maildir #t)
 
+
+    (define (directory-files dir dotfiles?)
+      (let ((files (lset-difference equal? (cfs-directory-files dir) (list "." ".."))))
+        (if dotfiles?
+         files
+         (remove (lambda (x) (string=? "." (substring x 0 1))) files))))
+    
     (define (directory-files-without-ignores . o)
       (let ((ans (apply directory-files o)))
+        ;; (display "directory-files-without-ignores:o ") (display o) (newline)
+        ;; (display "directory-files-without-ignores:ans ") (display ans) (newline)
         (lset-difference equal? ans
                          (list)))) ; was "cache"
 
     (define (newmain args)
       ;; (display "debug: args: ") (display args) (newline)
       ;; (display (length args))
-      (define actual-directory (absolute-file-name
-                                     (expand-file-name (if (< (length+ args) 2)
-                                                          "."
-                                                          (list-ref args 1)))))
-      (display "hello from Chibi")(newline)
-      (exit)
+      ;; (define actual-directory (absolute-file-name
+      ;;                                (expand-file-name (if (< (length+ args) 2)
+      ;;                                                     "."
+      ;;                                                     (list-ref args 1)))))
+      (define actual-directory (list-ref args 1))
       (print-prologue actual-directory)
       ;; (call-with-current-continuation
       ;;     (lambda (continue)
@@ -105,11 +117,12 @@
       ;;          (preview) (newline)
       ;;          (exit))
       ;;        (lambda ()
-               (walk-tree-and-print-edges "" actual-directory)
-               ;))))
+      (walk-tree-and-print-edges "" actual-directory)
       (newline)
       (print-nodes)
-      (print-epilogue))
+      (print-epilogue)
+               ;))))
+)
 
     (define filesep "/")
 
@@ -140,42 +153,71 @@
 
     (define (directory-only-directories . o)
       (let* ((raw-contents (apply directory-files-without-ignores o)))
-        (with-cwd (car o)
-                  (remove (lambda (x) (not (file-directory? x #f)))
-                  raw-contents))))
+        (cfs-with-directory (car o)
+                  (lambda () (remove (lambda (x) (not (file-directory? x #f))) raw-contents)))))
 
     (define (directory-only-files . o)
-      (let* ((raw-contents (apply directory-files-without-ignores o)))
-        (with-cwd (car o)
-                  (remove (lambda (x) (file-directory? x #f))
-                  raw-contents))))
+      (let* ((raw-contents (apply directory-files-without-ignores o))
+             ;; (discard1 (begin (display "\nraw-contents: ") (display raw-contents)(newline)))
+             )
+        (cfs-with-directory (car o)
+                  (lambda () (remove (lambda (x) (file-directory? x #f)) raw-contents)))))
 
+    
+    (define (file-name-extension-index fname)
+       (let ((dot (string-cursor->index fname (string-index-right fname #\.)))
+             (slash (string-cursor->index fname (string-index-right fname #\/))))
+         (if (and dot
+                  (> dot 0)
+                  (if slash (> dot slash) #t)
+                  (not (char=? #\/ (string-ref fname (- dot 1)))))
+             dot
+             (string-length fname))))
+     
+     (define (file-name-sans-extension fname)
+       (substring fname 0 (file-name-extension-index fname)))
+     
+     (define (file-name-extension fname)
+       (substring fname (file-name-extension-index fname)
+                        (string-length fname)))
+
+    
     (define (directory-album? path)
+      ;; (display "\ndebug:directory-album?: ") (display path) (newline)
       (if (not (file-directory? path #f))
          (begin (display "error: directory-album?, argument path is not a directory: ")
                 (display path)
                 (newline)
                 (exit)))
-      (let* ((d-cur-exts (map (lambda (name) (file-name-extension name))
-                              (directory-only-files path)))
+      (let* ((d-files (directory-only-files path #t))
+             ;; (discard1 (begin (display "\nfiles:")(display d-files) (newline)))
+             (d-cur-exts (map (lambda (name) (file-name-extension name)) d-files))
              (retval (and (not (null? d-cur-exts))
                         (lset<= equal? d-cur-exts image-extensions-list))))
         retval))
 
     (define (directory-maildir? path)
-      (lset= (directory-files path #t) (list "cur" "new" "tmp")))
+;      (display "directory-maildir?: ") (display path) (newline)
+      (let ((files (directory-files path #t)))
+        ;;(display files)
+        (lset= equal? files (list "cur" "new" "tmp"))))
 
-    (define (parse-filename filename)
-      (regexp-fold (rx (+ (~ "/")))
-                   (lambda (i m lis)
-                     (cons (match:substring m 0) lis))
-                   '() filename))
+    ;; (define (parse-filename filename)
+    ;;   (regexp-fold (rx (+ (~ "/")))
+    ;;                (lambda (i m lis)
+    ;;                  (cons (match:substring m 0) lis))
+    ;;                '() filename))
 
     (define (escape-like-write s)
-      (let ((p (make-string-output-port)))
-        (set-port-text-codec! p utf-8-codec)
-        (write s p)
-        (string-output-port-output p)))
+      (parameterize
+          ((current-output-port
+            (open-output-string)))
+        (write s)
+        (get-output-string (current-output-port))))
+      ;(let ((p (make-string-output-port)))
+        ;(set-port-text-codec! p utf-8-codec)
+      ;  (write s p)
+      ;  (string-output-port-output p)))
 
 
     (define inode-filename-table
@@ -194,6 +236,25 @@
     (define (file-record-pos f-r)
       (list-ref f-r 3))
 
+    (define (file-exists? f chase?)
+      (call/cc
+       (lambda (continue)
+       (with-exception-handler
+           (lambda (ex)
+             (display ex)(exit)(continue #f))
+         (lambda () ((if chase?
+                   cfs-file-status
+                   cfs-file-link-status
+                   ) f))))))
+
+    (define (file-info f chase?)
+      ((if chase?
+         cfs-file-status
+         cfs-file-link-status) f))
+    (define (file-info:inode f)
+      (cfs-file-inode f))
+    (define (file-info:device f)
+      (cfs-file-device f))
     
     (define (lwf-make-dev-plus-inode path)
       (if (file-exists? path #f)
@@ -214,7 +275,7 @@
       (define my-id-dev-inode (lwf-make-dev-plus-inode full-path))
       (define wrapped-name (wrap-string-hack basename))
       ;; (display "inserting:") (display full-path) (display " ") (display my-id-dev-inode) 
-      (let* ((cunzai (table-ref inode-filename-table my-id-dev-inode))
+      (let* ((cunzai (hash-table-ref/default inode-filename-table my-id-dev-inode #f))
              (to-insert (if cunzai
                             (make-file-record (combine (file-record-description cunzai)
                                                        wrapped-name)
@@ -225,12 +286,12 @@
                                               (select-node-shape full-path)
                                               (select-node-fillcolor full-path)
                                               pos))))
-          (table-set! inode-filename-table
+          (hash-table-set! inode-filename-table
                       my-id-dev-inode
                       to-insert)))
 
     (define (print-nodes)
-      (table-walk
+      (hash-table-for-each
        (lambda (k v)
          (display (format-node k
                                (file-record-description v)
@@ -260,26 +321,33 @@
         retval))
 
     (define (should-stop-at? full-path parent)
-      (or (not (file-directory? full-path #f))
-         (and config-stop-at-filesystem-boundaries
-            (filesystem-boundary? parent full-path))
-         (and config-stop-at-repos
-            (directory-repo? full-path))
-         (and config-stop-at-projects
-            (directory-project? full-path))
-         (and config-stop-at-filesystem-boundaries
-            (directory-deliberately-terminate? full-path))
-         (and config-stop-at-maildir
-            (directory-maildir? full-path))
-         ;; (directory-album? full-path)
-         ))
+;      (display "stop? ") (display full-path) 
+      (let ((retval (or (let ((r (not (file-directory? full-path #f))))
+                         ;; (display "debug:not dir?: ") (display r) (newline)
+                         r)
+                       (and config-stop-at-filesystem-boundaries
+                          (filesystem-boundary? parent full-path))
+                       (and config-stop-at-repos
+                          (directory-repo? full-path))
+                       (and config-stop-at-projects
+                          (directory-project? full-path))
+                       (and config-stop-at-filesystem-boundaries
+                          (directory-deliberately-terminate? full-path))
+                       (and config-stop-at-maildir
+                          (directory-maildir? full-path))
+                       ;; (directory-album? full-path)
+                       )))
+       ;; (display "debug:")(display retval)
+        retval))
 
     (define (directory-semantic-type path)
-      (cond ((not (file-directory? path #f)) 'ordinary)
-            ((directory-repo? path) 'repo)
-            ((directory-project? path) 'project)
-            ((directory-album? path) 'album)
-            (else 'unknown)))
+      (let ((retval (cond ((not (file-directory? path #f)) 'ordinary)
+                          ((directory-repo? path) 'repo)
+                          ((directory-project? path) 'project)
+                          ((directory-album? path) 'album)
+                          (else 'unknown))))
+        ;; (display "\ndirectory type: ") (display retval) (newline)
+        retval))
 
     (define (identity x )
       x)
@@ -295,26 +363,42 @@
       (case symbol
         ((album) album-filter)
         (else directory-files-without-ignores)))
+
+    (define (file-directory? f chase?)
+      ;; (display "\nfile-directory?:f:") (display f) (newline)
+      ;; (display "\nfile-directory?:chase?:") (display chase?) (newline)
+      (let* ((c (if chase?
+                               cfs-file-status
+                               cfs-file-link-status))
+             ;; (discard1 (begin (display "tool:") (display c) (newline)))
+             (retval (cfs-file-directory? (c f))))
+        ;; (display "file-directory?retval:") (display retval) (newline)
+        ;; (display "debug: ") (display (cfs-file-directory? (cfs-file-link-status "/home/lockywolf"))) (display "marker") (newline)
+        retval
+        ))
     
     (define (walk-tree-and-print-edges parent file)
-      (define full-path
-        (call-with-current-continuation
-         (lambda (continue)
-         (with-errno-handler*
-          (lambda (errno packet)
-               (display "caught error")(newline)
-               (display "errno=") (display errno) (newline)
-               (display "packet=") (display packet) (newline)
-               (display "parent=") (display parent) (newline)
-               (display "file=") (display file) (newline)
-               (display "backtrace:") (newline)
-               (preview) (newline)
-               ;(exit)
-               )
-          (lambda () (string-append (expand-file-name parent "/")
-                               filesep
-                               file))))))
+      ;; (define full-path
+      ;;   (call-with-current-continuation
+      ;;    (lambda (continue)
+      ;;    (with-errno-handler*
+      ;;     (lambda (errno packet)
+      ;;          (display "caught error")(newline)
+      ;;          (display "errno=") (display errno) (newline)
+      ;;          (display "packet=") (display packet) (newline)
+      ;;          (display "parent=") (display parent) (newline)
+      ;;          (display "file=") (display file) (newline)
+      ;;          (display "backtrace:") (newline)
+      ;;          (preview) (newline)
+      ;;          ;(exit)
+      ;;          )
+      ;;     (lambda () (string-append (expand-file-name parent "/")
+      ;;                          filesep
+      ;;                          file))))))
       ;;      (display "processing:") (display full-path)(newline)
+      (define full-path (if (equal? parent "")
+                      file
+                      (string-append parent filesep file)))
       (define pos (if (equal? parent "")
                 ", pos=\"0,0!\", pin=true, root=true"
                 ""))
@@ -331,6 +415,7 @@
          #t ;; (begin (display " // (terminal)") (newline))
          (let ((children ((get-children-filter (directory-semantic-type full-path))
                           full-path config-recurse-into-dotfiles)))
+;           (display "\nmain loop: ") (display children) (newline)
            (map (lambda (f) (newline) (walk-tree-and-print-edges full-path f))
                 children))))
 
@@ -346,9 +431,10 @@
       (display (string-append
                 "graph [overlap=false, splines=true, size=45, dpi=300, rankdir=LR label=\"Filesystem map, Directory: '"
                 (escape-like-write-without-quotes title)
-                "', Generated: "
-                (format-date "(~A) ~Y-~m-~dT~H:~M~Z" (date))
-                "\"];\n")) ; 45 inches ~ISO-A0 ; dpi typographic
+                "', Generated: '"
+                ;; (format-date "(~A) ~Y-~m-~dT~H:~M~Z" (date))
+                (seconds->string (current-seconds))
+                "'\"];\n")) ; 45 inches ~ISO-A0 ; dpi typographic
       (display "node [style=filled];\n"))
 
     (define (print-epilogue)
@@ -362,6 +448,11 @@
             ((directory-project? full-path) "tomato")
             ((directory-maildir? full-path) "teal")
             (else "white")))
+
+    (define (file-regular? f chase?)
+      (cfs-file-regular? ((if chase?
+                             cfs-file-status
+                             cfs-file-link-status) f)))
     
     (define (select-node-shape filename)
       (cond
@@ -380,13 +471,13 @@
          (string-append (substring str 0 hack-width)
                         "\n"
                         (wrap-string-hack (substring str hack-width (string-length str))))))
-    
+    (define read-symlink cfs-read-link)
     (define (format-edge source-name target-name)
       (string-append (lwf-make-dev-plus-inode source-name) ; (escape-like-write source-name)
                      " -> "
                      (lwf-make-dev-plus-inode target-name) ; (escape-like-write target-name)
                      " [arrowhead=\"vee\", arrowsize=0.318] // [len=3]"
-                     (if (not (file-symlink? target-name))
+                     (if (not (cfs-file-link? target-name))
                         ""
                         (string-append "\n"
                                        (lwf-make-dev-plus-inode target-name) ; (escape-like-write target-name)
@@ -397,12 +488,9 @@
     ) ; begin
   ) ; define-library
 
-;(import (mindmap))
-
 (define (newermain . args)
-  (display (module? (analyze-module '(mindmap))))
+  ;; (display (module? (analyze-module '(mindmap))))
   (apply (module-ref (analyze-module '(mindmap)) 'newmain) args)
-  ;; (apply newmain args)
   )
 
 
