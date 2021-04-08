@@ -1,7 +1,7 @@
 #!/usr/bin/chibi-scheme -rnewermain
 
 ;;>#!
-;;>Time-stamp: <2021-04-07 15:31:26 lockywolf>
+;;>Time-stamp: <2021-04-08 13:44:33 lockywolf>
 ;;>#+description: A port of dir2dot by Darxus@ChaosReighs.com into scheme.
 ;;>#+author: lockywolf
 ;;>#+created: <2021-03-17 Wed>
@@ -59,7 +59,8 @@
     ;; scheme-with-scsh
     ;; os-strings
     ;; (subset srfi-13 (string-join))
-    (only (srfi 1) lset-intersection lset<= lset-difference remove length+ take lset=)
+    (only (srfi 1) lset-intersection lset<= lset-difference remove length+ take
+                   lset= filter)
     ;; (subset i/o (set-port-text-codec!))
     ;; (subset text-codecs (utf-8-codec))
     ;; (subset tables (make-string-table table-ref table-set! table-walk))
@@ -68,7 +69,8 @@
     (chibi trace)
     (scheme small)
     (only (srfi 125) make-hash-table hash-table-ref/default hash-table-set! hash-table-for-each)
-    (only (srfi 130) string-index-right string-cursor->index)
+    (only (srfi 130) string-index-right string-cursor->index string-split
+                     string-contains string-suffix?)
     (rename (prefix (chibi filesystem) cfs-))
     (only (chibi time) current-seconds seconds->string)
    )
@@ -82,6 +84,64 @@
     (define config-stop-deliberately #t)
     (define config-stop-at-filesystem-boundaries #f)
     (define config-stop-at-maildir #t)
+    (define config-use-colour-names #t)
+    ;;> https://www.mail-archive.com/bug-coreutils@gnu.org/msg11030.html
+    ;;> a simplified version
+    ;;> attributes (unsupported): 00=none 01=bold 04=underscore 05=blink 07=reverse
+    ;;> Text: 30=black 31=red 32=green 33=yellow 34=blue 35=magenta 36=cyan 37=white
+    ;;> Background (unsupported): 40=black 41=red 42=green 43=yellow 44=blue 45=magenta 46=cyan 47=white
+    ;;> Extended Foreground: TODO # Text color coding: # 38;5;COLOR_NUMBER #
+    ;;> Extended Background: unsupported # 48;5;COLOR_NUMBER
+    
+    
+    (define (dircolor-spec->graphviz-color dircolor-spec)
+      (define dirspec-gcolor-alist ;; implement themability if you want
+        '(("30;" "black")
+          ("31;" "red")
+          ("32;" "green")
+          ("33;" "yellow")
+          ("34;" "blue")
+          ("35;" "magenta")
+          ("36;" "cyan")
+          ("37;" "white")
+          ("38;5;" "teal"))) ;; patches for extended support welcome
+      #;(define color-bg-alist ;; implement this if you want
+        '(("40;" "black")
+          ("41;" "red")
+          ("42;" "green")
+          ("43;" "yellow")
+          ("44;" "blue")
+          ("45;" "magenta")
+          ("46;" "cyan")
+          ("47;" "white")
+          ("48;5;" 'extended)))
+      (list 'foreground (let ((r (assoc dircolor-spec dirspec-gcolor-alist
+                                        (lambda (map-key dircolor-spec)
+                                          (if (string-contains map-key dircolor-spec) #t #f)))))
+                          (if r (cadr r) #f))))
+
+    (define theme-system-colors
+      (map (lambda (l-2-pat-spec)
+             (list (list-ref l-2-pat-spec 0)
+                   (dircolor-spec->graphviz-color
+                    (list-ref l-2-pat-spec 1))
+                   ))
+           (map (lambda (x) (let ((s (string-split x "=")))
+                         (list (substring (list-ref s 0) 1)
+                               (string-append (list-ref s 1) ";"))))
+                (filter
+                 (lambda (x) (and (> (string-length x) 0) (string=? "*" (substring x 0 1))))
+                 (string-split (get-environment-variable "LS_COLORS") ":")))))
+    
+    (define (select-node-fontcolor full-path)
+      (let ((r (assoc full-path
+                      theme-system-colors
+                      (lambda (full-path map-key)
+                        ;; (display "debug:") (display "map-key:") (display map-key) (display "full-path:") (display full-path) (newline)
+                        (string-suffix? map-key full-path)))))
+        (if r
+           (cadadr r)
+           "black")))
 
 
     (define (directory-files dir dotfiles?)
@@ -221,12 +281,12 @@
 
 
     (define inode-filename-table
-      (make-hash-table string?)                                  ;
+      (make-hash-table string=?);
       ;; (make-string-table)
       )
 
-    (define (make-file-record description shape fillcolor pos)
-      (list description shape fillcolor pos))
+    (define (make-file-record description shape fillcolor pos fontcolor)
+      (list description shape fillcolor pos fontcolor))
     (define (file-record-description f-r)
       (list-ref f-r 0))
     (define (file-record-shape f-r)
@@ -235,6 +295,8 @@
       (list-ref f-r 2))
     (define (file-record-pos f-r)
       (list-ref f-r 3))
+    (define (file-record-fontcolor f-r)
+      (list-ref f-r 4))
 
     (define (file-exists? f chase?)
       (call/cc
@@ -251,8 +313,10 @@
       ((if chase?
          cfs-file-status
          cfs-file-link-status) f))
+    
     (define (file-info:inode f)
       (cfs-file-inode f))
+    
     (define (file-info:device f)
       (cfs-file-device f))
     
@@ -263,11 +327,11 @@
                        (number->string (file-info:device f-i))
                        "_"
                        (number->string (file-info:inode  f-i))))
-       (string-append "\"dangling_" 
+       (string-append "\"dangling_"
                       (escape-like-write-without-quotes path)
                       "\""
                       )))
-    
+
     
     (define (inode-filename-table-insert-or-update  full-path basename pos)
       (define (combine wrapped-name-1 wrapped-name-2)
@@ -281,11 +345,13 @@
                                                        wrapped-name)
                                               (file-record-shape cunzai)
                                               (file-record-fillcolor cunzai)
-                                              (file-record-pos cunzai))
+                                              (file-record-pos cunzai)
+                                              (file-record-fontcolor cunzai))
                             (make-file-record wrapped-name
                                               (select-node-shape full-path)
                                               (select-node-fillcolor full-path)
-                                              pos))))
+                                              pos
+                                              (select-node-fontcolor full-path)))))
           (hash-table-set! inode-filename-table
                       my-id-dev-inode
                       to-insert)))
@@ -293,24 +359,23 @@
     (define (print-nodes)
       (hash-table-for-each
        (lambda (k v)
-         (display (format-node k
-                               (file-record-description v)
-                               (file-record-shape v)
-                               (file-record-fillcolor v)
-                               (file-record-pos v)))
+         (display (format-node k v))
          (newline))
        inode-filename-table))
 
-    (define (format-node node-id label shape fillcolor pos)
+    (define (format-node node-id entry)
       (string-append
        node-id "  [label="
-       (escape-like-write label)
+       (escape-like-write (file-record-description entry))
        " , shape=\""
-       shape
+       (file-record-shape entry)
        "\" , fillcolor=\""
-       fillcolor
+       (file-record-fillcolor entry)
        "\" "
-       pos
+       (file-record-pos entry)
+       ", fontcolor=\""
+       (file-record-fontcolor entry)
+       "\""
        ", fontsize=7, margin=\"0,0!\", width=0.01, height=0.01] //  " ))
 
     (define (filesystem-boundary? a b)
@@ -429,11 +494,16 @@
       (display "digraph \"directory tree\" {\n")
       ; https://stackoverflow.com/questions/3967600/how-to-prevent-edges-in-graphviz-to-overlap-each-other
       (display (string-append
-                "graph [overlap=false, splines=true, size=45, dpi=300, rankdir=LR label=\"Filesystem map, Directory: '"
+                "graph [overlap=false, splines=true"
+                ;", size=\"32.0,45.0\""
+                ", size=\"64.0,90.0\""
+                ", dpi=\"300.0\", rankdir=LR label=\"Filesystem map, Directory: '"
                 (escape-like-write-without-quotes title)
                 "', Generated: '"
                 ;; (format-date "(~A) ~Y-~m-~dT~H:~M~Z" (date))
-                (seconds->string (current-seconds))
+                (let* ((r (seconds->string (current-seconds)))
+                       (l (string-length r))
+                       (rv (substring r 0 (- l 1)))) rv)
                 "'\"];\n")) ; 45 inches ~ISO-A0 ; dpi typographic
       (display "node [style=filled];\n"))
 
@@ -497,6 +567,6 @@
 
 ;; Local Variables:
 ;; mode: scheme
-;; scheme-program-name: "chibi"
+;; scheme-program-name: "chibi-scheme"
 ;; End:
 

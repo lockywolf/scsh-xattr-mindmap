@@ -1,5 +1,5 @@
 # -*- mode: org; eval: (visual-line-mode) -*-
-# Time-stamp: <2021-04-06 22:41:35 lockywolf>
+# Time-stamp: <2021-04-08 13:55:42 lockywolf>
 #+title: Visualising File System with simple tools.
 #+author: lockywolf
 #+date: 
@@ -26,18 +26,37 @@ I tried various tools for mind mapping, including xmind, and others, but found t
 * TODO Usage
 
 #+begin_example
-filesystem-mindmap-scheme.scsh root-dir 1> dirmap.dot
+filesystem-mindmap-scheme.chibi.scm root-dir 1> dirmap.dot
 circo -Tjpg dirmap.dot > dirmap-dirco.jpg
 feh dirmap.jpg
 #+end_example
 
+~feh~ is the viewer I use, because it works well with gigantic images.
+The default size is 4A0, which is 90 by 64 inches — 5760 squared inches.
+It is unlikely that you can display more than that with file names.
+
+File name colours are taken from 8-color dircolors. ~man dircolors~
+256-color dircolors not implemented (patches welcome).
+
+
 * TODO Dependencies
 
-1. Scheme48 1.9.2 (with 1 000 000 000 words heap)
-2. scsh 0.7 (be careful, at the moment of writing of this document, building it is not easy)
-3. graphviz (built with -O3)
-4. +gnu coreutils+
-5. +attr+
+1. Chibi-scheme
+2. graphviz (built with -O3)
+3. gnu coreutils (for dircolors)
+4. +attr+ (not used yet)
+
+
+* TODO Prior art
+
+1. xmind
+
+
+
+
+* The older scsh version
+
+ *Do not use this version. It is for reference only.*
 
 Building:
 
@@ -63,8 +82,3 @@ Due to hardlinks, we need to keep all the file system structure in memory, and t
 (Or maybe I am just a bad programmer.)
 
 Maybe you also need to replace '-h 0' in the scsh Makefile.in with '-h 4000000000'? IDK.
-
-* TODO Prior art
-
-1. xmind
-
