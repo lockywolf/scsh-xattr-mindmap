@@ -1,7 +1,7 @@
 #!/usr/bin/chibi-scheme -rnewermain
 
 ;;>#!
-;;>Time-stamp: <2021-04-08 13:44:33 lockywolf>
+;;>Time-stamp: <2021-04-09 22:16:50 lockywolf>
 ;;>#+description: A port of dir2dot by Darxus@ChaosReighs.com into scheme.
 ;;>#+author: lockywolf
 ;;>#+created: <2021-03-17 Wed>
@@ -59,13 +59,13 @@
     ;; scheme-with-scsh
     ;; os-strings
     ;; (subset srfi-13 (string-join))
-    (only (srfi 1) lset-intersection lset<= lset-difference remove length+ take
-                   lset= filter)
     ;; (subset i/o (set-port-text-codec!))
     ;; (subset text-codecs (utf-8-codec))
     ;; (subset tables (make-string-table table-ref table-set! table-walk))
     ;; (subset srfi-27 (random-integer))
     ;; (subset usual-commands (preview))
+    (only (srfi 1) lset-intersection lset<= lset-difference remove length+ take
+                   lset= filter)
     (chibi trace)
     (scheme small)
     (only (srfi 125) make-hash-table hash-table-ref/default hash-table-set! hash-table-for-each)
@@ -73,6 +73,7 @@
                      string-contains string-suffix?)
     (rename (prefix (chibi filesystem) cfs-))
     (only (chibi time) current-seconds seconds->string)
+    (only (chibi process) process->output+error+status)
    )
 
   (begin
@@ -82,8 +83,13 @@
     (define config-stop-at-repos #t)
     (define config-stop-at-projects #t)
     (define config-stop-deliberately #t)
-    (define config-stop-at-filesystem-boundaries #f)
+    (define config-stop-at-filesystem-boundaries #t)
     (define config-stop-at-maildir #t)
+    (define config-stop-at-vdir #t)
+    ;;> Sometimes your tree is just too big.
+    ;;> Try skipping files altogether.
+    (define config-ignore-all-files #t)
+    (define config-no-labels #f)
     (define config-use-colour-names #t)
     ;;> https://www.mail-archive.com/bug-coreutils@gnu.org/msg11030.html
     ;;> a simplified version
@@ -158,13 +164,13 @@
                          (list)))) ; was "cache"
 
     (define (newmain args)
-      ;; (display "debug: args: ") (display args) (newline)
-      ;; (display (length args))
+      (define actual-directory (list-ref args 2))
+      (display "debug: args: ") (display args) (newline)
+      (display (length args)) (newline)
       ;; (define actual-directory (absolute-file-name
       ;;                                (expand-file-name (if (< (length+ args) 2)
       ;;                                                     "."
       ;;                                                     (list-ref args 1)))))
-      (define actual-directory (list-ref args 1))
       (print-prologue actual-directory)
       ;; (call-with-current-continuation
       ;;     (lambda (continue)
@@ -189,7 +195,7 @@
     (define (directory-something? path detector-list)
       (not (null? (lset-intersection equal? detector-list (directory-files path #t)))))
 
-    (define directory-repo-marker-list (list ".git" ".svn" ".cvs"))
+    (define directory-repo-marker-list (list ".git" ".svn" "CVS"))
 
     (define (directory-repo? path)
       (directory-something? path directory-repo-marker-list))
@@ -198,18 +204,46 @@
                                            "configure.ac"
                                            "Makefile.am"
                                            "configure"
-                                           "index.html"))
+                                           "index.html"
+                                           "readme.org"
+                                           "CMakeLists.txt"))
 
     (define (directory-project? path)
       (directory-something? path directory-project-marker-list))
 
     (define directory-deliberately-terminate-list (list "LWF-MINDMAP-TERMINATE"))
 
+
     (define (directory-deliberately-terminate? path)
       (directory-something? path directory-deliberately-terminate-list))
 
-    (define image-extensions-list
+    (define directory-skip-grandchildren-list
+      (list "LWF-MINDMAP-SKIP-GRANDCHILDREN"))
+
+    (define (directory-skip-grandchildren? path)
+      (or (directory-something? path directory-skip-grandchildren-list)
+         (cfs-with-directory path
+                             (lambda ()
+                               (display "debug:xattr:path=") (display path) (newline)
+                               (string=?
+                                (let ((r (car (process->output+error+status
+                                               "getfattr --no-dereference --only-values -n user.lwf.mindmap.skip-grandchildren ."))))
+                                  ;; (display "debug:") (display "path=")
+                                  ;; (display path) (newline) (display "answer=")
+                                  (display "response=")(write r) (newline)
+                                  r)
+                                "true")
+                               ;; (system? "getfattr" "--no-dereference" "--only-values" "-n" "user.lwf.mindmap.skip-grandchildren" ".")
+                               ))))
+
+    (define extensions-list-image
       (list ".jpg" ".JPG" ".jpeg" ".JPEG" ".tif" ".TIF" ".tiff" ".TIFF" ".gif" ".GIF" ".webp"))
+
+    (define extensions-list-video
+      (list ".mp4" ".avi" ".mpg" ".mpeg" ".webm" ".mov" ".ogm"))
+
+    (define extensions-vcard
+      (list ".vcf" ".VCF"))
 
     (define (directory-only-directories . o)
       (let* ((raw-contents (apply directory-files-without-ignores o)))
@@ -225,8 +259,8 @@
 
     
     (define (file-name-extension-index fname)
-       (let ((dot (string-cursor->index fname (string-index-right fname #\.)))
-             (slash (string-cursor->index fname (string-index-right fname #\/))))
+       (let ((dot (- (string-cursor->index fname (string-index-right fname #\.)) 1))
+             (slash (- (string-cursor->index fname (string-index-right fname #\/)) 1)))
          (if (and dot
                   (> dot 0)
                   (if slash (> dot slash) #t)
@@ -252,8 +286,12 @@
       (let* ((d-files (directory-only-files path #t))
              ;; (discard1 (begin (display "\nfiles:")(display d-files) (newline)))
              (d-cur-exts (map (lambda (name) (file-name-extension name)) d-files))
+             ;;(d1 (begin (display d-files) (newline) (display d-cur-exts)(newline) (display image-extensions-list) (newline)))
              (retval (and (not (null? d-cur-exts))
-                        (lset<= equal? d-cur-exts image-extensions-list))))
+                        (lset<= string=? d-cur-exts
+                                (append extensions-list-image
+                                        extensions-list-video)))))
+        ;;(display retval)(newline)
         retval))
 
     (define (directory-maildir? path)
@@ -261,7 +299,8 @@
       (let ((files (directory-files path #t)))
         ;;(display files)
         (lset= equal? files (list "cur" "new" "tmp"))))
-
+    (define (directory-vdir? path)
+      (directory-something? path extensions-vcard))
     ;; (define (parse-filename filename)
     ;;   (regexp-fold (rx (+ (~ "/")))
     ;;                (lambda (i m lis)
@@ -365,9 +404,14 @@
 
     (define (format-node node-id entry)
       (string-append
-       node-id "  [label="
-       (escape-like-write (file-record-description entry))
-       " , shape=\""
+       node-id
+       "  ["
+       "label=\""
+       (if (not config-no-labels)
+          (escape-like-write-without-quotes (file-record-description entry))
+          "")
+       "\", "
+       " shape=\""
        (file-record-shape entry)
        "\" , fillcolor=\""
        (file-record-fillcolor entry)
@@ -386,23 +430,28 @@
         retval))
 
     (define (should-stop-at? full-path parent)
-;      (display "stop? ") (display full-path) 
+      ;; (display "stop? ") (display full-path) 
       (let ((retval (or (let ((r (not (file-directory? full-path #f))))
                          ;; (display "debug:not dir?: ") (display r) (newline)
                          r)
+                       (and config-stop-at-vdir
+                          (directory-vdir? full-path))
                        (and config-stop-at-filesystem-boundaries
                           (filesystem-boundary? parent full-path))
                        (and config-stop-at-repos
                           (directory-repo? full-path))
                        (and config-stop-at-projects
                           (directory-project? full-path))
-                       (and config-stop-at-filesystem-boundaries
+                       (and config-stop-deliberately
                           (directory-deliberately-terminate? full-path))
                        (and config-stop-at-maildir
                           (directory-maildir? full-path))
+                       (and config-stop-deliberately
+                          (not (string=? parent ""))
+                          (directory-skip-grandchildren? parent))
                        ;; (directory-album? full-path)
                        )))
-       ;; (display "debug:")(display retval)
+        ;; (display "debug:")(display retval)
         retval))
 
     (define (directory-semantic-type path)
@@ -433,14 +482,18 @@
       ;; (display "\nfile-directory?:f:") (display f) (newline)
       ;; (display "\nfile-directory?:chase?:") (display chase?) (newline)
       (let* ((c (if chase?
-                               cfs-file-status
-                               cfs-file-link-status))
+                   cfs-file-status
+                   cfs-file-link-status))
              ;; (discard1 (begin (display "tool:") (display c) (newline)))
              (retval (cfs-file-directory? (c f))))
         ;; (display "file-directory?retval:") (display retval) (newline)
         ;; (display "debug: ") (display (cfs-file-directory? (cfs-file-link-status "/home/lockywolf"))) (display "marker") (newline)
         retval
         ))
+    
+    (define (ignore-by-config? full-path)
+      (cond ((and config-ignore-all-files (not (file-directory? full-path #f))) #t)
+            (else #f)))
     
     (define (walk-tree-and-print-edges parent file)
       ;; (define full-path
@@ -471,18 +524,19 @@
       ;; (display "file=") (display file) (newline)
       ;; (display "full-path=") (display full-path) (newline)
       ;; (display "pos=") (display pos) (newline)
-      (inode-filename-table-insert-or-update full-path file pos)
-
-      ;; (newline)
-      (if (not (equal? parent ""))
-         (display (format-edge parent full-path)))
-      (if (should-stop-at? full-path parent)
-         #t ;; (begin (display " // (terminal)") (newline))
-         (let ((children ((get-children-filter (directory-semantic-type full-path))
-                          full-path config-recurse-into-dotfiles)))
-;           (display "\nmain loop: ") (display children) (newline)
-           (map (lambda (f) (newline) (walk-tree-and-print-edges full-path f))
-                children))))
+      (if (ignore-by-config? full-path)
+         'ignored
+         (begin
+           (inode-filename-table-insert-or-update full-path file pos)
+           (if (not (equal? parent ""))
+              (begin (display (format-edge parent full-path)) (newline)))
+           (if (should-stop-at? full-path parent)
+              'terminal ;; (begin (display " // (terminal)") (newline))
+              (let ((children ((get-children-filter (directory-semantic-type full-path))
+                               full-path config-recurse-into-dotfiles)))
+                ;; (display "\nmain loop: ") (display children) (newline)
+                (map (lambda (f)  (walk-tree-and-print-edges full-path f))
+                     children))))))
 
     (define (escape-like-write-without-quotes str1)
       (let* ((str (escape-like-write str1))
@@ -496,7 +550,7 @@
       (display (string-append
                 "graph [overlap=false, splines=true"
                 ;", size=\"32.0,45.0\""
-                ", size=\"64.0,90.0\""
+                ", size=\"40.0,90.0\""
                 ", dpi=\"300.0\", rankdir=LR label=\"Filesystem map, Directory: '"
                 (escape-like-write-without-quotes title)
                 "', Generated: '"
