@@ -1,52 +1,36 @@
 #!/usr/bin/chibi-scheme -rnewermain
-
 ;;>#!
-;;>Time-stamp: <2021-04-09 22:16:50 lockywolf>
+;;>Time-stamp: <2021-04-12 12:52:31 lockywolf>
 ;;>#+description: A port of dir2dot by Darxus@ChaosReighs.com into scheme.
 ;;>#+author: lockywolf
 ;;>#+created: <2021-03-17 Wed>
 ;;>#+category: utilities
 ;;>#+tags: programming, mind, mind-map, scheme
 ;;>#+creator: Emacs 27.1/org-mode 9.4
-;;>Usage:
-;;>time filesystem-mindmap-scheme root > /tmp/dirtree.dot
-;;>time circo -Tpng dirtree.dot > dirtree.png
-;;>You can try other engines.
-;;>On my machine sfdp takes 3 hours on ~3000 nodes.
-;;>Graphviz: https://www.graphviz.org/
+;;> Usage:
+;;> time filesystem-mindmap-scheme root > /tmp/dirtree.dot
+;;> time circo -Tpng dirtree.dot > dirtree.png
+;;> For me, for smaller trees (~500 nodes), circo works best. For large -- sfdp.
+;;> Graphviz: https://www.graphviz.org/
+;;> Requirements: (independentresearch xattr)
+;;> Install from snow-fort.org
 ;;>
-;;>Legend:
-;;>Files: boxes
-;;>File types: font colours
-;;>Directory shapes: ordinary:oval, project:house, repo:doubleoctagon
-;;>Fillcolor: incompletely displayed trees
+;;> Legend:
+;;> Files: boxes
+;;> File types: font colours
+;;> Directory shapes: ordinary:oval, project:house, repo:doubleoctagon
+;;> Fillcolor: incompletely displayed trees
 ;;>
-;;>TODO:
-;;>3. File name colouring.
-;;>4. Displaying images.
-;;>5. Handling of dangling symlinks.
+;;> TODO:
+;;> 4. Displaying images.
 ;;>
-;;>Far TODO:
-;;>1. Music albums.
-;;>2. Other kinds of projects.
-;;>3. README.org
+;;> Far TODO:
+;;> 1. Music albums.
+;;> 2. Other kinds of projects.
+;;> 3. README.org
 
 ;;>!#
 
-;; (if (zero? (run (ls)))
-;;    (display "LS successful.\n")
-;;    (display "LS unsuccessful."))
-;; (display "Hello\n")
-;; (display "arguments:")
-;; (display command-line-arguments)
-;; (newline)
-;; (display "(argv 1 \".\"): ") (display (argv 1 ".")) (newline)
-;; (display "string-join test:") (display (string-join  (list "string1" "string2") "/" ))
-;; (newline)
-
-
-
-;; (define-interface mindmap-interface (export newmain))
 
 (import (chibi))
 (import (chibi modules))
@@ -67,13 +51,15 @@
     (only (srfi 1) lset-intersection lset<= lset-difference remove length+ take
                    lset= filter)
     (chibi trace)
-    (scheme small)
+    (except (scheme small) file-exists?)
     (only (srfi 125) make-hash-table hash-table-ref/default hash-table-set! hash-table-for-each)
     (only (srfi 130) string-index-right string-cursor->index string-split
                      string-contains string-suffix?)
     (rename (prefix (chibi filesystem) cfs-))
     (only (chibi time) current-seconds seconds->string)
     (only (chibi process) process->output+error+status)
+    (only (independentresearch xattr) lgetxattr)
+    ;(only (srfi 115) rx regexp-matches?)
    )
 
   (begin
@@ -83,6 +69,9 @@
     (define config-stop-at-repos #t)
     (define config-stop-at-projects #t)
     (define config-stop-deliberately #t)
+    ;;> Lets you use the user.lwf.mindmap.skip-grandchildren xattr on a directory
+    ;;> to only traverse it one level deep.
+    (define config-use-xattrs #t)
     (define config-stop-at-filesystem-boundaries #t)
     (define config-stop-at-maildir #t)
     (define config-stop-at-vdir #t)
@@ -155,22 +144,28 @@
         (if dotfiles?
          files
          (remove (lambda (x) (string=? "." (substring x 0 1))) files))))
+    (define config-ignore-entirely-list
+      (list "ltximg" "auto"))
     
     (define (directory-files-without-ignores . o)
       (let ((ans (apply directory-files o)))
         ;; (display "directory-files-without-ignores:o ") (display o) (newline)
         ;; (display "directory-files-without-ignores:ans ") (display ans) (newline)
         (lset-difference equal? ans
-                         (list)))) ; was "cache"
+                         config-ignore-entirely-list))) ; was "cache"
 
     (define (newmain args)
-      (define actual-directory (list-ref args 2))
-      (display "debug: args: ") (display args) (newline)
-      (display (length args)) (newline)
+      (define actual-directory (if (< (length+ args) 3)
+                             "."
+                             (list-ref args 2)))
+      ;;  (display "debug: args: ") (display args) (newline)
+      ;; (display "debug:length-args:")(display (length args)) (newline)
       ;; (define actual-directory (absolute-file-name
       ;;                                (expand-file-name (if (< (length+ args) 2)
       ;;                                                     "."
       ;;                                                     (list-ref args 1)))))
+      (if (not (file-exists? actual-directory #f))
+         (error "Target file/directory does not exist."))
       (print-prologue actual-directory)
       ;; (call-with-current-continuation
       ;;     (lambda (continue)
@@ -193,48 +188,73 @@
     (define filesep "/")
 
     (define (directory-something? path detector-list)
-      (not (null? (lset-intersection equal? detector-list (directory-files path #t)))))
+      (not (null? (lset-intersection
+                   ;; regexp-matches?
+                   (lambda (suf str-body) (string-suffix? suf str-body))
+                   detector-list (directory-files path #t)))))
 
     (define directory-repo-marker-list (list ".git" ".svn" "CVS"))
 
     (define (directory-repo? path)
       (directory-something? path directory-repo-marker-list))
 
+    ;;> strings (are valid sre expressions) match in full,
+    ;;> or just write SRE
     (define directory-project-marker-list (list "Makefile"
                                            "configure.ac"
                                            "Makefile.am"
                                            "configure"
                                            "index.html"
                                            "readme.org"
-                                           "CMakeLists.txt"))
+                                           "CMakeLists.txt"
+                                           "readme.txt"
+                                           "README.txt"
+                                           "README.md"
+                                           "src" ;; a bit dangerous
+                                           ".aup"
+                                           ;; (rx (: (* any) "aup"))
+                                           )) ; .*aup
 
     (define (directory-project? path)
       (directory-something? path directory-project-marker-list))
 
     (define directory-deliberately-terminate-list (list "LWF-MINDMAP-TERMINATE"))
 
-
     (define (directory-deliberately-terminate? path)
       (directory-something? path directory-deliberately-terminate-list))
 
+    (define directory-force-continue-list
+      (list "LWF-MINDMAP-FORCE-CONTINUE"))
+
+    (define (directory-force-continue? path)
+      (directory-something? path directory-force-continue-list))
+    
     (define directory-skip-grandchildren-list
       (list "LWF-MINDMAP-SKIP-GRANDCHILDREN"))
 
     (define (directory-skip-grandchildren? path)
       (or (directory-something? path directory-skip-grandchildren-list)
-         (cfs-with-directory path
+          (and config-use-xattrs
+           (cfs-with-directory path
                              (lambda ()
-                               (display "debug:xattr:path=") (display path) (newline)
+                               ;; (display "debug:xattr:path=") (display path) (newline)
                                (string=?
-                                (let ((r (car (process->output+error+status
-                                               "getfattr --no-dereference --only-values -n user.lwf.mindmap.skip-grandchildren ."))))
+                                (let* (
+                                       ;; (r1 (process->output+error+status
+                                       ;;    "getfattr --no-dereference --only-values -n user.lwf.mindmap.skip-grandchildren ."))
+                                       ;; (r2 (cadr r1))
+                                       ;; (r (car r1))
+                                       (x (lgetxattr "." "user.lwf.mindmap.skip-grandchildren"))
+                                       )
                                   ;; (display "debug:") (display "path=")
                                   ;; (display path) (newline) (display "answer=")
-                                  (display "response=")(write r) (newline)
-                                  r)
+                                  ;; (display "response=")(write r) (newline)
+                                  (if x
+                                     x
+                                     ""))
                                 "true")
                                ;; (system? "getfattr" "--no-dereference" "--only-values" "-n" "user.lwf.mindmap.skip-grandchildren" ".")
-                               ))))
+                               )))))
 
     (define extensions-list-image
       (list ".jpg" ".JPG" ".jpeg" ".JPEG" ".tif" ".TIF" ".tiff" ".TIFF" ".gif" ".GIF" ".webp"))
@@ -296,9 +316,9 @@
 
     (define (directory-maildir? path)
 ;      (display "directory-maildir?: ") (display path) (newline)
-      (let ((files (directory-files path #t)))
+      (let ((dirs (directory-only-directories path #f))) ; no ignores, hidden files and symlinks
         ;;(display files)
-        (lset= equal? files (list "cur" "new" "tmp"))))
+        (lset= equal? dirs (list "cur" "new" "tmp"))))
     (define (directory-vdir? path)
       (directory-something? path extensions-vcard))
     ;; (define (parse-filename filename)
@@ -431,9 +451,8 @@
 
     (define (should-stop-at? full-path parent)
       ;; (display "stop? ") (display full-path) 
-      (let ((retval (or (let ((r (not (file-directory? full-path #f))))
-                         ;; (display "debug:not dir?: ") (display r) (newline)
-                         r)
+      (let ((retval (and (not (directory-force-continue? full-path))
+                     (or (let ((r (not (file-directory? full-path #f)))) r)
                        (and config-stop-at-vdir
                           (directory-vdir? full-path))
                        (and config-stop-at-filesystem-boundaries
@@ -450,7 +469,7 @@
                           (not (string=? parent ""))
                           (directory-skip-grandchildren? parent))
                        ;; (directory-album? full-path)
-                       )))
+                       ))))
         ;; (display "debug:")(display retval)
         retval))
 
@@ -485,14 +504,17 @@
                    cfs-file-status
                    cfs-file-link-status))
              ;; (discard1 (begin (display "tool:") (display c) (newline)))
-             (retval (cfs-file-directory? (c f))))
+             (exists? (file-exists? f chase?))
+             (retval (if exists?
+                        (cfs-file-directory? (c f))
+                        #f)))
         ;; (display "file-directory?retval:") (display retval) (newline)
         ;; (display "debug: ") (display (cfs-file-directory? (cfs-file-link-status "/home/lockywolf"))) (display "marker") (newline)
         retval
         ))
     
     (define (ignore-by-config? full-path)
-      (cond ((and config-ignore-all-files (not (file-directory? full-path #f))) #t)
+      (cond ((and config-ignore-all-files (not (file-directory? full-path #t))) #t)
             (else #f)))
     
     (define (walk-tree-and-print-edges parent file)
@@ -529,7 +551,9 @@
          (begin
            (inode-filename-table-insert-or-update full-path file pos)
            (if (not (equal? parent ""))
-              (begin (display (format-edge parent full-path)) (newline)))
+              (begin (display "\n\n // debug:full-path=") (display full-path) (newline)
+                     (display (format-edge parent full-path)) (newline)
+                     ))
            (if (should-stop-at? full-path parent)
               'terminal ;; (begin (display " // (terminal)") (newline))
               (let ((children ((get-children-filter (directory-semantic-type full-path))
@@ -548,9 +572,10 @@
       (display "digraph \"directory tree\" {\n")
       ; https://stackoverflow.com/questions/3967600/how-to-prevent-edges-in-graphviz-to-overlap-each-other
       (display (string-append
-                "graph [overlap=false, splines=true"
-                ;", size=\"32.0,45.0\""
-                ", size=\"40.0,90.0\""
+                "graph [overlap=false, splines=false"
+                ;; ", size=\"32.0,45.0\""
+                ", ratio=\"0.4\""
+                ", size=\"100.0!\""
                 ", dpi=\"300.0\", rankdir=LR label=\"Filesystem map, Directory: '"
                 (escape-like-write-without-quotes title)
                 "', Generated: '"
@@ -567,7 +592,8 @@
     (define (select-node-fillcolor full-path)
       (cond ((not (file-directory? full-path #f)) "white")
             ((directory-album? full-path) "pink")
-            ((directory-deliberately-terminate? full-path) "red")
+            ((or (directory-deliberately-terminate? full-path)
+                (directory-skip-grandchildren? full-path)) "red")
             ((directory-repo? full-path) "green")
             ((directory-project? full-path) "tomato")
             ((directory-maildir? full-path) "teal")
@@ -595,19 +621,37 @@
          (string-append (substring str 0 hack-width)
                         "\n"
                         (wrap-string-hack (substring str hack-width (string-length str))))))
+    #;(define (absolutize-symlink-path symlink-path)
+      (define bad-path (read-link symlink-path))
+      (define (absolute-path? path)
+        (and (> (string-length path) 0)
+           (= "/" (substring path 0 1))))
+      (define (file-directory ))
+      (if (absolute-path? bad-path)
+         bad-path
+         
+         )
+      )
     (define read-symlink cfs-read-link)
     (define (format-edge source-name target-name)
       (string-append (lwf-make-dev-plus-inode source-name) ; (escape-like-write source-name)
                      " -> "
                      (lwf-make-dev-plus-inode target-name) ; (escape-like-write target-name)
                      " [arrowhead=\"vee\", arrowsize=0.318] // [len=3]"
+                     " // source=" source-name
+                     " // target=" target-name
                      (if (not (cfs-file-link? target-name))
                         ""
                         (string-append "\n"
                                        (lwf-make-dev-plus-inode target-name) ; (escape-like-write target-name)
                                        " -> "
-                                       (lwf-make-dev-plus-inode (read-symlink target-name)) ; (escape-like-write (read-symlink target-name))
+                                       (lwf-make-dev-plus-inode
+                                        (cfs-with-directory target-name
+                                                                (lambda () (cfs-current-directory)))
+                                        #;(read-symlink target-name)
+                                        ) ; (escape-like-write (read-symlink target-name))
                                        " [color=\"cornflowerblue\"] // [len=3]"
+                                       " // link-to=" (read-symlink target-name)
                                        ))))
     ) ; begin
   ) ; define-library
