@@ -1,5 +1,5 @@
 # -*- mode: org; eval: (visual-line-mode) -*-
-# Time-stamp: <2021-04-08 13:55:42 lockywolf>
+# Time-stamp: <2021-04-13 10:33:47 lockywolf>
 #+title: Visualising File System with simple tools.
 #+author: lockywolf
 #+date: 
@@ -10,20 +10,20 @@
 #+tags: utilities, mind-mapping, programming, computers, software, philosophy,
 #+creator: Emacs 27.1/org-mode 9.4
 
-# Scsh Xattr Mindmap
+# Chibi Xattr Mindmap
 
 Drawing mindmaps from you File System with scsh and xattrs.
 
 
 
-* TODO Concept
+* Concept
 
 I like the idea of visualising concepts, while computers are notoriously non-visual by default. For my own purposes, I wanted to find a tool to visualise at least the data on my own hard drive.
 
 Mind-mapping is one of the most famous methods of doing that, along with the tag cloud.
 I tried various tools for mind mapping, including xmind, and others, but found them to be too heavy.
 
-* TODO Usage
+* Usage
 
 #+begin_example
 filesystem-mindmap-scheme.chibi.scm root-dir 1> dirmap.dot
@@ -38,20 +38,35 @@ It is unlikely that you can display more than that with file names.
 File name colours are taken from 8-color dircolors. ~man dircolors~
 256-color dircolors not implemented (patches welcome).
 
+Below is the demo: a directory of a Slarm64 repository ~2020.
+Not every feature is shown, but you get the idea.
+The full png is 44Mb (the link is below the image).
+That is 1x2.5 meters. The original plan was to print a poster and put it on the wall.
 
-* TODO Dependencies
+[[./2021-04-13_Slarm64-repo-tree.smaller.png]]
+
+[[https://gitlab.com/Lockywolf/scsh-xattr-mindmap/-/blob/master/2021-04-13_Slarm64-repo-tree.png][Download]]
+
+* Dependencies
 
 1. Chibi-scheme
 2. graphviz (built with -O3)
 3. gnu coreutils (for dircolors)
-4. +attr+ (not used yet)
+4. attr
+5. ~snow-chibi install '(independentresearch xattr)'
 
+* TODO Wishlist.
 
-* TODO Prior art
+1. More heuristics (pull requests welcome).
+2. Formatting in xattrs.
+3. uuid-associations in xattrs
+4. Recursing into projects/maildirs in a customisable way.
+5. Recursing into files semantically.
+6. Tags and such.
+
+* Prior art
 
 1. xmind
-
-
 
 
 * The older scsh version
