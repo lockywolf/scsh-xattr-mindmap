@@ -1,6 +1,6 @@
 #!/usr/bin/chibi-scheme -rnewermain
 ;;>#!
-;;>Time-stamp: <2021-04-12 12:52:31 lockywolf>
+;;>Time-stamp: <2021-04-18 21:26:31 lockywolf>
 ;;>#+description: A port of dir2dot by Darxus@ChaosReighs.com into scheme.
 ;;>#+author: lockywolf
 ;;>#+created: <2021-03-17 Wed>
@@ -126,7 +126,10 @@
                                (string-append (list-ref s 1) ";"))))
                 (filter
                  (lambda (x) (and (> (string-length x) 0) (string=? "*" (substring x 0 1))))
-                 (string-split (get-environment-variable "LS_COLORS") ":")))))
+                 (string-split (let ((ans (get-environment-variable "LS_COLORS")))
+                                 (if ans
+                                    ans
+                                    "")) ":")))))
     
     (define (select-node-fontcolor full-path)
       (let ((r (assoc full-path
